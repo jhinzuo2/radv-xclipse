@@ -1226,6 +1226,37 @@ wsi_GetPhysicalDeviceSurfaceCapabilities2EXT(
    return result;
 }
 
+/* Xclipse: MESA_VK_WSI_FORMAT_FILTER=nofp16|bgra8 limits the advertised surface formats. */
+static unsigned
+wsi_format_filter_mode(void)
+{
+   static int mode = -1;
+   if (mode < 0) {
+      const char *s = os_get_option("MESA_VK_WSI_FORMAT_FILTER");
+      mode = 0;
+      if (s && !strcmp(s, "nofp16"))
+         mode = 1;
+      else if (s && !strcmp(s, "bgra8"))
+         mode = 2;
+   }
+   return mode;
+}
+
+static bool
+wsi_format_allowed(unsigned mode, VkFormat f)
+{
+   switch (mode) {
+   case 1:
+      return f != VK_FORMAT_R16G16B16A16_SFLOAT &&
+             f != VK_FORMAT_R16G16B16_SFLOAT;
+   case 2:
+      return f == VK_FORMAT_B8G8R8A8_UNORM ||
+             f == VK_FORMAT_B8G8R8A8_SRGB;
+   default:
+      return true;
+   }
+}
+
 VKAPI_ATTR VkResult VKAPI_CALL
 wsi_GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice physicalDevice,
                                        VkSurfaceKHR _surface,
@@ -1237,8 +1268,38 @@ wsi_GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice physicalDevice,
    struct wsi_device *wsi_device = device->wsi_device;
    struct wsi_interface *iface = wsi_device->wsi[surface->platform];
 
-   return iface->get_formats(surface, wsi_device,
-                             pSurfaceFormatCount, pSurfaceFormats);
+   const unsigned mode = wsi_format_filter_mode();
+   if (!mode)
+      return iface->get_formats(surface, wsi_device,
+                                pSurfaceFormatCount, pSurfaceFormats);
+
+   uint32_t n = 0;
+   VkResult r = iface->get_formats(surface, wsi_device, &n, NULL);
+   if (r != VK_SUCCESS)
+      return r;
+   VkSurfaceFormatKHR *all = malloc(sizeof(*all) * (n ? n : 1));
+   if (!all)
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+   r = iface->get_formats(surface, wsi_device, &n, all);
+   if (r != VK_SUCCESS && r != VK_INCOMPLETE) {
+      free(all);
+      return r;
+   }
+
+   uint32_t kept = 0;
+   for (uint32_t i = 0; i < n; i++)
+      kept += wsi_format_allowed(mode, all[i].format);
+
+   VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormatKHR, out, pSurfaceFormats, pSurfaceFormatCount);
+   for (uint32_t i = 0; i < n; i++) {
+      if (kept && !wsi_format_allowed(mode, all[i].format))
+         continue;
+      vk_outarray_append_typed(VkSurfaceFormatKHR, &out, f) {
+         *f = all[i];
+      }
+   }
+   free(all);
+   return vk_outarray_status(&out);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -1252,8 +1313,42 @@ wsi_GetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice physicalDevice,
    struct wsi_device *wsi_device = device->wsi_device;
    struct wsi_interface *iface = wsi_device->wsi[surface->platform];
 
-   VkResult result = iface->get_formats2(surface, wsi_device, pSurfaceInfo->pNext,
-                                         pSurfaceFormatCount, pSurfaceFormats);
+   VkResult result;
+   const unsigned mode = wsi_format_filter_mode();
+   if (!mode) {
+      result = iface->get_formats2(surface, wsi_device, pSurfaceInfo->pNext,
+                                   pSurfaceFormatCount, pSurfaceFormats);
+   } else {
+      uint32_t n = 0;
+      result = iface->get_formats2(surface, wsi_device, pSurfaceInfo->pNext, &n, NULL);
+      if (result != VK_SUCCESS)
+         return result;
+      VkSurfaceFormat2KHR *all = calloc(n ? n : 1, sizeof(*all));
+      if (!all)
+         return VK_ERROR_OUT_OF_HOST_MEMORY;
+      for (uint32_t i = 0; i < n; i++)
+         all[i].sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR;
+      result = iface->get_formats2(surface, wsi_device, pSurfaceInfo->pNext, &n, all);
+      if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+         free(all);
+         return result;
+      }
+
+      uint32_t kept = 0;
+      for (uint32_t i = 0; i < n; i++)
+         kept += wsi_format_allowed(mode, all[i].surfaceFormat.format);
+
+      VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormat2KHR, out, pSurfaceFormats, pSurfaceFormatCount);
+      for (uint32_t i = 0; i < n; i++) {
+         if (kept && !wsi_format_allowed(mode, all[i].surfaceFormat.format))
+            continue;
+         vk_outarray_append_typed(VkSurfaceFormat2KHR, &out, f) {
+            f->surfaceFormat = all[i].surfaceFormat;
+         }
+      }
+      free(all);
+      result = vk_outarray_status(&out);
+   }
 
    if (result != VK_SUCCESS && result != VK_INCOMPLETE)
       return result;
