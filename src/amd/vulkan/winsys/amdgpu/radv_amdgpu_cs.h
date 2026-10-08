@@ -24,6 +24,15 @@ struct radv_amdgpu_fence {
    struct amdgpu_cs_fence fence;
 };
 
+/* Xclipse 920 GFX pacing, see radv_xclipse_pace_begin(). */
+struct radv_xclipse_pace {
+   uint32_t syncobj; /* timeline: point n is signalled by the n-th GFX job */
+   uint64_t count;   /* points signalled so far */
+   uint64_t seq[2];  /* kernel seq_no of points count and count - 1, indexed by point & 1 */
+   uint64_t last_ns; /* time of the previous GFX submit */
+   uint64_t avg_ns;  /* running mean of the submit interval while the GPU is backlogged */
+};
+
 struct radv_amdgpu_ctx {
    struct radv_amdgpu_winsys *ws;
    uint32_t ctx_handle;
@@ -33,6 +42,8 @@ struct radv_amdgpu_ctx {
 
    uint32_t queue_syncobj[AMDGPU_HW_IP_NUM + 1][MAX_RINGS_PER_TYPE];
    bool queue_syncobj_wait[AMDGPU_HW_IP_NUM + 1][MAX_RINGS_PER_TYPE];
+
+   struct radv_xclipse_pace xclipse_pace[MAX_RINGS_PER_TYPE];
 };
 
 static inline struct radv_amdgpu_ctx *

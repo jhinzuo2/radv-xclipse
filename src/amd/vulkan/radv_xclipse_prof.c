@@ -40,7 +40,7 @@
 #define XPROF_SLOTS 16384     /* command buffer busy spans, [top, bottom] */
 #define XPASS_SLOTS (1 << 18) /* pass boundaries */
 
-enum { XPASS_FB, XPASS_CS, XPASS_OTHER, XPASS_END };
+enum { XPASS_FB, XPASS_CS, XPASS_OTHER, XPASS_RT, XPASS_END };
 
 struct radv_xprof_pass {
    uint32_t frame, shader, draws, groups;
@@ -80,7 +80,7 @@ static uint64_t *xp_map; /* XPROF_SLOTS pairs, then XPASS_SLOTS boundaries */
 static struct radv_xprof_pass *xp_meta;
 static atomic_uint xp_ts_next, xp_pass_next;
 
-static const char *const xp_kind[2][3] = {{"FB", "CS", "--"}, {"FB*", "CS*", "--*"}};
+static const char *const xp_kind[2][4] = {{"FB", "CS", "--", "RT"}, {"FB*", "CS*", "--*", "RT*"}};
 
 /* Clear census (radv_xprof_clear): a few distinct clears per frame, so a small table. */
 #define XCLR_SLOTS 64
@@ -235,6 +235,7 @@ xp_report(void *data, FILE *f)
    unsigned ng = 0, counted = 0;
    uint32_t f0 = UINT32_MAX, f1 = 0;
    double total = 0;
+   unsigned nlong = 0;
    for (unsigned i = 0; i < np; i++) {
       const struct radv_xprof_pass *p = &xp_meta[i];
       if (p->kind == XPASS_END || !p->end || p->end > np)
@@ -243,8 +244,15 @@ xp_report(void *data, FILE *f)
       if (!t0 || !t1 || t1 < t0)
          continue;
       const double ms = (t1 - t0) / khz;
-      if (ms > 1000)
+      /* Spans past a minute are stale slots (a command buffer reused across windows). A single
+       * pass of 100 ms or more is listed by itself: that is a runaway shader or a stall, not a
+       * frame's worth of work. */
+      if (ms > 60000)
          continue;
+      if (ms >= 100 && nlong++ < 32)
+         fprintf(f, "# long pass %s shader %08x vgprs %u w%u  %ux%u  groups %u  %.1f ms  frame %u\n",
+                 xp_kind[p->meta][p->kind], p->shader, p->vgprs, p->wave, p->w, p->h, p->groups, ms,
+                 p->frame);
       f0 = MIN2(f0, p->frame);
       f1 = MAX2(f1, p->frame);
       struct radv_xprof_pass k = *p;
@@ -471,6 +479,24 @@ radv_xprof_begin_rendering(struct radv_cmd_buffer *cmd_buffer, const VkRendering
    }
 }
 
+/* A ray tracing dispatch is its own pass: the shader is the RT prolog, whose VGPR count and wave
+ * size are the dispatch's, and groups counts rays (0 for an indirect launch). */
+void
+radv_xprof_trace_rays(struct radv_cmd_buffer *cmd_buffer, const struct radv_shader *rt_prolog, uint32_t width,
+                      uint32_t height, uint32_t depth)
+{
+   if (!cmd_buffer->xprof_slot)
+      return;
+   struct radv_xprof_pass *p = xp_boundary(cmd_buffer, XPASS_RT);
+   if (!p)
+      return;
+   if (rt_prolog)
+      xp_shader_stats(p, rt_prolog);
+   p->w = MIN2(width, UINT16_MAX);
+   p->h = MIN2(height, UINT16_MAX);
+   p->groups = width * height * depth;
+}
+
 void
 radv_xprof_dispatch(struct radv_cmd_buffer *cmd_buffer, const uint32_t blocks[3])
 {
@@ -530,6 +556,8 @@ void radv_xprof_begin_cmdbuf(struct radv_cmd_buffer *cmd_buffer) {}
 void radv_xprof_end_cmdbuf(struct radv_cmd_buffer *cmd_buffer) {}
 void radv_xprof_begin_rendering(struct radv_cmd_buffer *cmd_buffer, const VkRenderingInfo *info) {}
 void radv_xprof_dispatch(struct radv_cmd_buffer *cmd_buffer, const uint32_t blocks[3]) {}
+void radv_xprof_trace_rays(struct radv_cmd_buffer *cmd_buffer, const struct radv_shader *rt_prolog, uint32_t width,
+                           uint32_t height, uint32_t depth) {}
 void radv_xprof_draw_slow(struct radv_cmd_buffer *cmd_buffer, uint32_t draw_count) {}
 bool radv_xprof_sampling(void) { return false; }
 void radv_xprof_clear_slow(struct radv_cmd_buffer *cmd_buffer, const struct radv_image_view *iview, bool depth,

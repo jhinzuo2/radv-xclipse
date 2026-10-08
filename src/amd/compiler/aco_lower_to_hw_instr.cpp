@@ -2752,7 +2752,8 @@ lower_to_hw_instr(Program* program)
                break;
             }
             case aco_opcode::p_init_scratch: {
-               assert(program->gfx_level >= GFX8 && program->gfx_level <= GFX10_3);
+               /* GFX11 only with aco_compiler_options::gfx10_scratch_init (Xclipse). */
+               assert(program->gfx_level >= GFX8 && program->gfx_level <= GFX11);
                if (!program->config->scratch_bytes_per_wave && !program->has_call)
                   break;
 

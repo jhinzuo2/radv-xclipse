@@ -746,7 +746,8 @@ emit_mimg_instruction(asm_context& ctx, std::vector<uint32_t>& out, const Instru
 
    uint32_t encoding = (0b111100 << 26);
    if (ctx.gfx_level >= GFX11) { /* GFX11: rearranges most fields */
-      assert(nsa_dwords <= 1);
+      /* The Xclipse 920 takes up to 3 NSA dwords here, counted in bits [1:0] (see gfx10_nsa). */
+      assert(nsa_dwords <= (ctx.program->gfx10_nsa ? 3u : 1u));
       encoding |= nsa_dwords;
       encoding |= mimg.dim << 2;
       encoding |= mimg.unrm ? 1 << 7 : 0;

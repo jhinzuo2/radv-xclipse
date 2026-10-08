@@ -1571,11 +1571,16 @@ visit_bvh64_intersect_ray_amd(isel_context* ctx, nir_intrinsic_instr* instr)
    /* Use vector-aligned scalar operands in order to avoid unnecessary copies
     * when creating vectors.
     */
+   /* Xclipse 920 (gfx10_nsa): GFX11 encoding, but the NSA operands are read the GFX10.3 way, one
+    * VGPR per address dword, with the NSA dword count in bits [1:0]. Grouped GFX11 operands make
+    * it take the node pointer's high half from the extent register and so on: every ray misses.
+    * PAL emits the per-dword form (3 NSA dwords); so do we. */
+   const bool grouped_nsa = bld.program->gfx_level >= GFX11 && !bld.program->gfx10_nsa;
    std::vector<Operand> scalar_args;
    for (Temp tmp : args) {
       for (unsigned i = 0; i < tmp.size(); i++) {
          scalar_args.push_back(Operand(emit_extract_vector(ctx, tmp, i, v1)));
-         if (bld.program->gfx_level >= GFX11 || bld.program->gfx_level < GFX10_3)
+         if (grouped_nsa || bld.program->gfx_level < GFX10_3)
             scalar_args.back().setVectorAligned(true);
       }
       /* GFX10: cannot use NSA and must treat all Operands as one large vector. */

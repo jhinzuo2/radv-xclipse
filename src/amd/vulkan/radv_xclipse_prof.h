@@ -15,6 +15,7 @@
 
 struct radv_cmd_buffer;
 struct radv_device;
+struct radv_shader;
 
 void radv_xprof_device_init(struct radv_device *device);
 void radv_xprof_device_finish(struct radv_device *device);
@@ -26,6 +27,8 @@ void radv_xprof_end_cmdbuf(struct radv_cmd_buffer *cmd_buffer);
 /* Pass boundaries: a render pass begins, a dispatch, and (from radv_xprof_draw) a new pixel shader. */
 void radv_xprof_begin_rendering(struct radv_cmd_buffer *cmd_buffer, const VkRenderingInfo *info);
 void radv_xprof_dispatch(struct radv_cmd_buffer *cmd_buffer, const uint32_t blocks[3]);
+void radv_xprof_trace_rays(struct radv_cmd_buffer *cmd_buffer, const struct radv_shader *rt_prolog, uint32_t width,
+                           uint32_t height, uint32_t depth);
 void radv_xprof_draw_slow(struct radv_cmd_buffer *cmd_buffer, uint32_t draw_count);
 
 /* Clear census: every color/depth clear that reaches the fast-clear check, and why it was not a

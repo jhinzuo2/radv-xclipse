@@ -140,7 +140,7 @@ init_program(Program* program, Stage stage, const struct aco_shader_info* info,
    if (program->gfx_level >= GFX12) {
       program->dev.scratch_global_offset_min = -8388608;
       program->dev.scratch_global_offset_max = 8388607;
-   } else if (program->gfx_level >= GFX11) {
+   } else if (program->gfx_level >= GFX11 && !options->gfx10_global_offsets) {
       program->dev.scratch_global_offset_min = -4096;
       program->dev.scratch_global_offset_max = 4095;
    } else if (program->gfx_level >= GFX10 || program->gfx_level == GFX8) {

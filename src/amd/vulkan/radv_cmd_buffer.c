@@ -15618,6 +15618,8 @@ radv_trace_rays(struct radv_cmd_buffer *cmd_buffer, VkTraceRaysIndirectCommand2K
    assert(cs->b->cdw <= cdw_max);
 
    radv_before_trace_rays(cmd_buffer, rt_pipeline);
+   if (unlikely(cmd_buffer->xprof_slot))
+      radv_xprof_trace_rays(cmd_buffer, rt_prolog, info.blocks[0], info.blocks[1], info.blocks[2]);
    radv_emit_dispatch_packets(cmd_buffer, rt_prolog, &info);
    radv_after_trace_rays(cmd_buffer);
 

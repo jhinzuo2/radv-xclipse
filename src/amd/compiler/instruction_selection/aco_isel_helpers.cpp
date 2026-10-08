@@ -810,7 +810,8 @@ add_startpgm(struct isel_context* ctx, bool is_callee)
             ctx->program->private_segment_buffers.push_back(get_arg(ctx, ctx->args->ring_offsets));
 
          ctx->program->scratch_offsets.push_back(get_arg(ctx, ctx->args->scratch_offset));
-      } else if (ctx->program->gfx_level <= GFX10_3 && ctx->program->stage != raytracing_cs) {
+      } else if ((ctx->program->gfx_level <= GFX10_3 || ctx->options->gfx10_scratch_init) &&
+                 ctx->program->stage != raytracing_cs) {
          /* Manually initialize scratch. For RT stages scratch initialization is done in the prolog.
           */
          Operand scratch_addr = ctx->args->ring_offsets.used

@@ -161,6 +161,16 @@ struct aco_compiler_options {
    bool has_vopd;
    /* Do not emit s_delay_alu: an RDNA3 hardware feature. The vendor compiler emits none here. */
    bool no_delay_alu;
+   /* Global/scratch immediate offsets are 12-bit signed (-2048..2047) as on RDNA2, although the
+    * GFX11 encoding has a 13-bit field. Measured on the Xclipse 920 (probe/gfx/rt/goffprobe): a
+    * global access at +2800 or +4092 lands 4 KiB low. */
+   bool gfx10_global_offsets;
+   /* Load FLAT_SCRATCH in the shader from the scratch ring address in s[0:1] and the wave's
+    * scratch offset, as on GFX10.3, although the ISA is GFX11 (where the hardware sets the base
+    * from COMPUTE_DISPATCH_SCRATCH_BASE). The Xclipse's command processor is GFX10.3 and never
+    * does, so without this every scratch access faults until the kernel's 5 s job timeout
+    * (probe/gfx/rt/scratchprobe). */
+   bool gfx10_scratch_init;
    uint32_t address32_hi;
 };
 

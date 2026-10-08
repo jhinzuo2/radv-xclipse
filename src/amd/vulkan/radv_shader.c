@@ -3573,6 +3573,15 @@ radv_aco_fill_compiler_options(struct aco_compiler_options *aco_info, const stru
       aco_info->gfx_level = GFX11;
    aco_info->has_vopd = aco_info->gfx_level >= GFX11 && !compiler_info->hw.gfx11_isa;
    aco_info->no_delay_alu = compiler_info->hw.gfx11_isa;
+   aco_info->gfx10_global_offsets = compiler_info->hw.gfx11_isa;
+   /* RADV_XCLIPSE_SCRATCHINIT=0 turns it off, for A/B only (an env var, so it is part of the
+    * shader cache key): scratch then does not work on this chip at all. */
+   static int scratch_init = -1;
+   if (scratch_init < 0) {
+      const char *e = getenv("RADV_XCLIPSE_SCRATCHINIT");
+      scratch_init = e && e[0] ? atoi(e) != 0 : 1;
+   }
+   aco_info->gfx10_scratch_init = compiler_info->hw.gfx11_isa && scratch_init;
 }
 
 void
@@ -3589,6 +3598,57 @@ radv_set_stage_key_robustness(const struct vk_pipeline_robustness_state *rs, mes
       key->vertex_robustness1 = 1u;
 }
 
+/* Xclipse (gfx11_isa): in wave64, ACO moves data between the two 32-lane halves with
+ * v_permlane64_b32, which only RDNA3 hardware has. On the 920 the other half reads back 0
+ * (probe/gfx/rt/sgprobe). That path is taken by shuffle, read_invocation with an index that is
+ * not a constant, and rotate. Log each wave64 shader that has them (diagnostic level 1), so a
+ * field capture says whether an app reaches it. */
+static void
+radv_xclipse_log_wave64_crosslane(struct nir_shader *const *shaders, int shader_count)
+{
+#ifdef __ANDROID__
+   if (ac_xclipse_log_level() < 1)
+      return;
+   unsigned shuffles = 0, reads = 0, rotates = 0;
+   for (int i = 0; i < shader_count; i++) {
+      nir_foreach_function_impl (impl, shaders[i]) {
+         nir_foreach_block (block, impl) {
+            nir_foreach_instr (instr, block) {
+               if (instr->type != nir_instr_type_intrinsic)
+                  continue;
+               nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+               switch (intr->intrinsic) {
+               case nir_intrinsic_shuffle:
+               case nir_intrinsic_shuffle_xor:
+               case nir_intrinsic_shuffle_up:
+               case nir_intrinsic_shuffle_down:
+                  shuffles++;
+                  break;
+               case nir_intrinsic_read_invocation:
+                  if (!nir_src_is_const(intr->src[1]))
+                     reads++;
+                  break;
+               case nir_intrinsic_rotate:
+                  rotates++;
+                  break;
+               default:
+                  break;
+               }
+            }
+         }
+      }
+   }
+   if (shuffles + reads + rotates) {
+      const struct nir_shader *s = shaders[shader_count - 1];
+      AC_XCLIPSE_LOGP(ANDROID_LOG_WARN, "RADV_ARM",
+                      "[W64XLANE] %s wave64 shader uses cross-half lane ops (broken on this chip): shuffle %u "
+                      "read_invocation %u rotate %u  block %ux%ux%u  name %s",
+                      mesa_shader_stage_name(s->info.stage), shuffles, reads, rotates, s->info.workgroup_size[0],
+                      s->info.workgroup_size[1], s->info.workgroup_size[2], s->info.name ? s->info.name : "-");
+   }
+#endif
+}
+
 struct radv_shader_binary *
 radv_shader_nir_to_asm(const struct radv_compiler_info *compiler_info, struct radv_shader_stage *pl_stage,
                        struct nir_shader *const *shaders, int shader_count,
@@ -3602,6 +3662,9 @@ radv_shader_nir_to_asm(const struct radv_compiler_info *compiler_info, struct ra
    bool dump_shader = false;
    for (unsigned i = 0; i < shader_count; ++i)
       dump_shader |= radv_can_dump_shader(compiler_info, shaders[i]);
+
+   if (info->wave_size == 64 && compiler_info->hw.gfx11_isa)
+      radv_xclipse_log_wave64_crosslane(shaders, shader_count);
 
    struct radv_shader_binary *binary = NULL;
 #if AMD_LLVM_AVAILABLE
