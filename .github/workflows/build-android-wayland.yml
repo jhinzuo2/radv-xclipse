@@ -1,0 +1,32 @@
+# Builds the combined Android + Wayland driver zip for Bannerlator's Wayland mode (see build-wayland.sh).
+# Put *.patch files into patches/ at the repo root; they are applied in sorted order, as in build-android.
+# Run via Actions -> "build-android-wayland" -> "Run workflow".
+name: build-android-wayland
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install meson ninja mako packaging pyyaml
+      - run: sudo apt-get update && sudo apt-get install -y glslang-tools patchelf pkg-config
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r29
+      - name: Apply patches
+        run: |
+          shopt -s nullglob
+          for p in patches/*.patch; do
+            echo "applying $p"
+            git apply --check "$p" && git apply "$p"
+          done
+      - name: Build
+        run: ./build-wayland.sh "${{ steps.ndk.outputs.ndk-path }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: radv-xclipse-wayland
+          path: dist/*
